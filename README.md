@@ -1,1 +1,1 @@
-# Catur-BETA-TES-
+# Catur (BETA-TES)
