@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Catur AI Bersih</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    
+    <style>
+        /* --- MENCEGAH SEMUA BAYANGAN & EFEK SENTUH BAWAAN --- */
+        * {
+            -webkit-tap-highlight-color: transparent !important; /* Hilangkan efek abu-abu sentuh di HP */
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #2c3e50;
+            color: white;
+            margin-top: 20px;
+            user-select: none; 
+        }
+
+        /* Mematikan efek hantu (ghost) browser saat gambar ditarik */
+        img, .piece-417db {
+            -webkit-user-drag: none !important;
+            user-drag: none !important;
+            box-shadow: none !important;
+            filter: drop-shadow(0 0 0 transparent) !important;
+        }
+
+        h1 { margin-bottom: 5px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .controls {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        select, button {
+            padding: 10px 15px;
+            font-size: 15px;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        select { background-color: #ecf0f1; color: #2c3e50; outline: none; }
+        button { color: #fff; background-color: #e74c3c; transition: background 0.3s; }
+        button:hover { background-color: #c0392b; }
+        button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+        
+        #board {
+            width: 400px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            border-radius: 4px;
+        }
+        .info {
+            text-align: center;
+            background: #34495e;
+            padding: 15px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            min-width: 340px;
+        }
+        #status { font-weight: bold; color: #f1c40f; font-size: 18px; }
+        
+        /* Warna seleksi HANYA aktif saat mode klik */
+        .highlight-selected {
+            background-color: rgba(46, 204, 113, 0.6) !important;
+        }
+
+        /* Titik Bantuan Bersih (Tanpa Bayangan) */
+        .highlight-move { position: relative; cursor: pointer; }
+        .highlight-move::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 25px; height: 25px;
+            background-color: rgba(255, 255, 255, 0.6);
+            border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        #victoryModal {
+            display: none; position: fixed; z-index: 1000; 
+            left: 0; top: 0; width: 100%; height: 100%; 
+            background-color: rgba(0,0,0,0.8); 
+            align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background-color: #34495e; padding: 40px; 
+            border-radius: 12px; text-align: center; 
+            color: white; box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            border: 4px solid #f1c40f;
+            animation: popIn 0.3s ease-out;
+        }
+        .modal-content h2 { margin-top: 0; color: #f1c40f; font-size: 32px; text-transform: uppercase; }
+        .modal-content p { font-size: 20px; margin-bottom: 25px; }
+        .modal-content button { background-color: #27ae60; font-size: 18px; padding: 12px 25px; }
+        .modal-content button:hover { background-color: #2ecc71; }
+        @keyframes popIn { 0% { transform: scale(0.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <h1>Catur AI Pro</h1>
+    
+    <div class="controls">
+        <select id="modeSelect">
+            <option value="bot-easy">Lawan Bot (Mudah)</option>
+            <option value="bot-medium">Lawan Bot (Sedang)</option>
+            <option value="bot-hard">Lawan Bot (Sulit)</option>
+            <option value="pvp">Lawan Teman (Berdua)</option>
+        </select>
+        <button id="restartBtn">Mulai Ulang Game</button>
+    </div>
+    
+    <div id="board"></div>
+    
+    <div class="info">
+        <p>Status: <span id="status">Memuat...</span></p>
+    </div>
+
+    <div id="victoryModal">
+        <div class="modal-content">
+            <h2 id="victoryTitle">GAME OVER</h2>
+            <p id="victoryMessage">Putih Menang!</p>
+            <button id="playAgainBtn">Main Lagi</button>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+    <script>
+        var board = null;
+        var game = new Chess();
+        var $status = $('#status');
+        var gameMode = 'bot-easy'; 
+        var isBotThinking = false;
+        
+        var selectedSquare = null;
+        var lastDropTime = 0;
+
+        function clearHighlights() {
+            $('#board .highlight-move').removeClass('highlight-move');
+            $('#board .highlight-selected').removeClass('highlight-selected');
+            selectedSquare = null;
+        }
+
+        var pieceValues = { 'p': 10, 'n': 30, 'b': 30, 'r': 50, 'q': 90, 'k': 900 };
+
+        function evaluateBoard() {
+            var totalEvaluation = 0;
+            var boardArray = game.board();
+            for (var i = 0; i < 8; i++) {
+                for (var j = 0; j < 8; j++) {
+                    if (boardArray[i][j] != null) {
+                        var piece = boardArray[i][j];
+                        var val = pieceValues[piece.type];
+                        if (i >= 2 && i <= 5 && j >= 2 && j <= 5) val += 2;
+                        totalEvaluation += (piece.color === 'w') ? val : -val;
+                    }
+                }
+            }
+            return totalEvaluation;
+        }
+
+        function minimax(depth, alpha, beta, isMaximizingPlayer) {
+            if (game.in_checkmate()) return isMaximizingPlayer ? -99999 : 99999;
+            if (game.in_draw() || game.in_stalemate() || game.in_threefold_repetition()) return 0;
+            if (depth === 0) return evaluateBoard();
+
+            var moves = game.moves();
+            if (isMaximizingPlayer) {
+                var bestVal = -99999;
+                for (var i = 0; i < moves.length; i++) {
+                    game.move(moves[i]);
+                    bestVal = Math.max(bestVal, minimax(depth - 1, alpha, beta, false));
+                    game.undo();
+                    alpha = Math.max(alpha, bestVal);
+                    if (beta <= alpha) break;
+                }
+                return bestVal;
+            } else {
+                var bestVal = 99999;
+                for (var i = 0; i < moves.length; i++) {
+                    game.move(moves[i]);
+                    bestVal = Math.min(bestVal, minimax(depth - 1, alpha, beta, true));
+                    game.undo();
+                    beta = Math.min(beta, bestVal);
+                    if (beta <= alpha) break;
+                }
+                return bestVal;
+            }
+        }
+
+        function getBestMove(depth) {
+            var moves = game.moves();
+            var bestMove = null;
+            var bestValue = 99999; 
+            moves.sort(function() { return 0.5 - Math.random() });
+
+            for (var i = 0; i < moves.length; i++) {
+                var move = moves[i];
+                game.move(move);
+                var boardValue = minimax(depth - 1, -100000, 100000, true);
+                game.undo();
+                
+                if (boardValue < bestValue) {
+                    bestValue = boardValue;
+                    bestMove = move;
+                }
+            }
+            return bestMove;
+        }
+
+        function makeBotMove() {
+            if (game.game_over()) { isBotThinking = false; return; }
+            var moves = game.moves();
+            if (moves.length > 0) {
+                var move = (gameMode === 'bot-easy') ? moves[Math.floor(Math.random() * moves.length)] : 
+                           (gameMode === 'bot-medium') ? getBestMove(1) : getBestMove(2);
+                game.move(move);
+                board.position(game.fen());
+            }
+            isBotThinking = false;
+            updateStatus();
+        }
+        
+        function onDragStart (source, piece, position, orientation) {
+            if (game.game_over() || isBotThinking) return false;
+
+            var isMyPiece = false;
+            if (gameMode.startsWith('bot')) {
+                isMyPiece = (piece.search(/^w/) !== -1);
+            } else {
+                isMyPiece = ((game.turn() === 'w' && piece.search(/^w/) !== -1) ||
+                             (game.turn() === 'b' && piece.search(/^b/) !== -1));
+            }
+
+            if (!isMyPiece) return false;
+
+            clearHighlights();
+            selectedSquare = source;
+
+            // PERBAIKAN: Hanya tampilkan titik putih, JANGAN nyalakan kotak hijau saat ditarik
+            var moves = game.moves({ square: source, verbose: true });
+            for (var i = 0; i < moves.length; i++) {
+                $('#board .square-' + moves[i].to).addClass('highlight-move');
+            }
+        }
+
+        function onDrop (source, target) {
+            lastDropTime = Date.now(); 
+
+            // PERBAIKAN: Jika bidak hanya di-KLIK (tidak ditarik), baru nyalakan warna hijau
+            if (source === target) {
+                $('#board .square-' + source).addClass('highlight-selected');
+                return 'snapback';
+            }
+
+            var move = game.move({ from: source, to: target, promotion: 'q' });
+
+            if (move === null) {
+                clearHighlights(); 
+                return 'snapback';
+            }
+
+            clearHighlights();
+            updateStatus();
+
+            if (gameMode.startsWith('bot') && !game.game_over()) {
+                isBotThinking = true;
+                $status.html('Bot membalas...');
+                window.setTimeout(makeBotMove, 100);
+            }
+        }
+
+        function onSnapEnd () { board.position(game.fen()); }
+
+        $('#board').on('click', '[data-square]', function() {
+            if (Date.now() - lastDropTime < 100) return;
+            if (game.game_over() || isBotThinking) return;
+
+            var square = $(this).closest('[data-square]').attr('data-square');
+
+            if (selectedSquare) {
+                if (selectedSquare === square) {
+                    clearHighlights();
+                    return;
+                }
+
+                var moves = game.moves({ square: selectedSquare, verbose: true });
+                var move = moves.find(m => m.to === square);
+
+                if (move) {
+                    game.move({ from: selectedSquare, to: square, promotion: 'q' });
+                    board.position(game.fen());
+                    clearHighlights();
+                    updateStatus();
+
+                    if (gameMode.startsWith('bot') && !game.game_over()) {
+                        isBotThinking = true;
+                        $status.html('Bot membalas...');
+                        window.setTimeout(makeBotMove, 100);
+                    }
+                    return; 
+                }
+            }
+
+            clearHighlights();
+        });
+
+        function showVictoryModal(title, message) {
+            $('#victoryTitle').text(title);
+            $('#victoryMessage').text(message);
+            $('#victoryModal').css('display', 'flex');
+        }
+
+        function hideVictoryModal() {
+            $('#victoryModal').css('display', 'none');
+        }
+
+        function updateStatus () {
+            var statusHTML = '';
+            var moveColor = (game.turn() === 'b') ? 'Hitam' : 'Putih';
+            var opponentColor = (game.turn() === 'b') ? 'Putih' : 'Hitam';
+
+            if (game.in_checkmate()) {
+                statusHTML = 'Game Over, ' + moveColor + ' Skakmat.';
+                showVictoryModal('SKAKMAT!', opponentColor + ' memenangkan permainan.');
+            } else if (game.in_draw() || game.in_stalemate() || game.in_threefold_repetition()) {
+                statusHTML = 'Game Over, Seri (Draw).';
+                showVictoryModal('SERI (DRAW)', 'Permainan berakhir seimbang.');
+            } else {
+                statusHTML = moveColor + ' jalan';
+                if (game.in_check()) {
+                    statusHTML += ' (SKAK!)';
+                }
+            }
+            $status.html(statusHTML);
+            
+            $('#restartBtn').prop('disabled', isBotThinking);
+            $('#modeSelect').prop('disabled', isBotThinking);
+        }
+
+        var config = {
+            draggable: true,
+            position: 'start',
+            onDragStart: onDragStart,
+            onDrop: onDrop,
+            onSnapEnd: onSnapEnd,
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+        };
+        
+        board = Chessboard('board', config);
+        updateStatus();
+
+        function resetGame() {
+            if(isBotThinking) return;
+            clearHighlights();
+            hideVictoryModal();
+            game.reset();
+            board.start();
+            updateStatus();
+        }
+
+        $('#restartBtn').on('click', resetGame);
+        $('#playAgainBtn').on('click', resetGame);
+        $('#modeSelect').on('change', function() {
+            if(isBotThinking) return;
+            gameMode = this.value;
+            resetGame();
+        });
+    </script>
+</body>
+</html>
